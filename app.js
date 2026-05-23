@@ -34,16 +34,18 @@ const SMOOTHING_LEFT = 0.35;
 const SMOOTHING_RIGHT = 0.55;
 
 // ==========================================
-// AUDIO ENGINE: KHÔNG ĐỔI
+// AUDIO ENGINE NÂNG CẤP: GIẢ LẬP GUITAR AKUSTIK THỰC TẾ
 // ==========================================
 let audioCtx = null;
+
+// Tần số chuẩn của 6 hợp âm (Mỗi hợp âm gồm 5 nốt phối theo thế tay guitar thùng ngoài đời)
 const chordFrequencies = {
-    'C': [130.81, 164.81, 196.00, 261.63, 329.63],
-    'D': [146.83, 220.00, 293.66, 369.99, 440.00],
-    'G': [98.00, 123.47, 146.83, 196.00, 392.00],
-    'Em': [82.41, 130.81, 164.81, 196.00, 329.63],
-    'Am': [110.00, 146.83, 220.00, 261.63, 440.00],
-    'F': [87.31, 130.81, 174.61, 261.63, 349.23]
+    'C': [130.81, 164.81, 196.00, 261.63, 329.63], // C3 - E3 - G3 - C4 - E4
+    'D': [146.83, 220.00, 293.66, 369.99, 440.00], // D3 - A3 - D4 - F#4 - A4
+    'G': [98.00, 123.47, 146.83, 196.00, 392.00], // G2 - B2 - D3 - G3 - G4
+    'Em': [82.41, 130.81, 164.81, 196.00, 329.63], // E2 - C3 - E3 - G3 - E4
+    'Am': [110.00, 146.83, 220.00, 261.63, 440.00], // A2 - D3 - A3 - C4 - A4
+    'F': [87.31, 130.81, 174.61, 261.63, 349.23]  // F2 - C3 - F3 - C4 - F4
 };
 
 function initAudio() {
@@ -61,29 +63,64 @@ function playGuitarChord(chordName, velocity) {
     const freqs = chordFrequencies[chordName];
     if (!freqs) return;
 
-    const volume = Math.min(Math.max(velocity / 60, 0.2), 0.85); // Tăng trần âm lượng một chút cho màn hình rộng
+    // Tính toán âm lượng dựa trên lực vung tay phải
+    const baseVolume = Math.min(Math.max(velocity / 60, 0.25), 0.75);
     const now = audioCtx.currentTime;
 
-    freqs.forEach((freq, index) => {
-        const strumDelay = index * 0.012;
-        const time = now + strumDelay;
+    // Duyệt qua từng dây trong hợp âm
+    freqs.forEach((fundamentalFreq, stringIndex) => {
+        // Tải hiệu ứng rải dây cách nhau 18ms (giúp tiếng đàn nghe tách bạch, tự nhiên hơn)
+        const strumDelay = stringIndex * 0.018;
+        const startTime = now + strumDelay;
 
-        const osc = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
+        // KÉO DÀI THỜI GIAN VANG: Tăng từ 1.0 giây lên 2.5 giây cho tiếng ngân sâu
+        const sustainTime = 2.5;
 
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, time);
+        // Tạo cụm Gain Node tổng cho nốt nhạc này
+        const noteGain = audioCtx.createGain();
+        noteGain.gain.setValueAtTime(0, startTime);
+        noteGain.gain.linearRampToValueAtTime(baseVolume, startTime + 0.008); // Nhấn mạnh tức thì lúc gảy
+        noteGain.gain.exponentialRampToValueAtTime(0.001, startTime + sustainTime); // Ngân vang nhỏ dần trong 2.5s
 
-        gainNode.gain.setValueAtTime(0, time);
-        gainNode.gain.linearRampToValueAtTime(volume, time + 0.01);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, time + 1.1);
+        // 🎻 THUẬT TOÁN TẠO HOẠ LẠI BỒI ÂM (Tạo 3 tầng sóng phụ để giả lập độ mộc gỗ)
+        // Tầng 1: Sóng nốt gốc (Sóng tam giác dịu - chiếm 60% năng lượng)
+        createOscillator(fundamentalFreq, 'triangle', 0.6, startTime, sustainTime, noteGain);
 
-        osc.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
+        // Tầng 2: Họa âm bậc 2 (Tần số gấp đôi, tạo độ sáng sắc nét - chiếm 25% năng lượng)
+        createOscillator(fundamentalFreq * 2, 'sawtooth', 0.25, startTime, sustainTime, noteGain);
 
-        osc.start(time);
-        osc.stop(time + 1.1);
+        // Tầng 3: Họa âm bậc 3 (Tần số gấp ba, tạo độ ấm dày - chiếm 15% năng lượng)
+        createOscillator(fundamentalFreq * 3, 'triangle', 0.15, startTime, sustainTime, noteGain);
+
+        // Thêm một bộ lọc thấp (LowPass Filter) để cắt bớt tiếng chói điện tử, giữ lại dải âm mộc trầm ấm
+        const filterNode = audioCtx.createBiquadFilter();
+        filterNode.type = 'lowpass';
+        // Tần số filter giảm dần theo thời gian giống như dây đàn bớt rung động
+        filterNode.frequency.setValueAtTime(1200, startTime);
+        filterNode.frequency.exponentialRampToValueAtTime(300, startTime + sustainTime);
+
+        // Kết nối chuỗi âm thanh: Ô tạo sóng -> Note Gain -> Bộ lọc -> Loa máy tính
+        noteGain.connect(filterNode);
+        filterNode.connect(audioCtx.destination);
     });
+}
+
+// Hàm phụ trợ tạo nhanh các ống dao động âm thanh
+function createOscillator(freq, type, volumeRatio, startTime, duration, destinationGain) {
+    const osc = audioCtx.createOscillator();
+    const oscGain = audioCtx.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+
+    // Gán tỷ lệ âm lượng cho từng tầng họa âm
+    oscGain.gain.setValueAtTime(volumeRatio, startTime);
+
+    osc.connect(oscGain);
+    oscGain.connect(destinationGain);
+
+    osc.start(startTime);
+    osc.stop(startTime + duration);
 }
 
 // ==========================================

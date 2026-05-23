@@ -1,8 +1,7 @@
 body {
     margin: 0;
-    padding: 0;
-    width: 100vw;
-    height: 100vh;
+    padding: 10px 0;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -10,35 +9,56 @@ body {
     background-color: #0f172a;
     font-family: sans-serif;
     color: #f8fafc;
+    box-sizing: border-box;
 }
 
 h1 {
-    margin-bottom: 5px;
-    font-size: 1.5rem;
+    margin: 0 0 5px 0;
+    font-size: 1.4rem;
+    text-align: center;
 }
 
 p {
-    margin-bottom: 20px;
+    margin: 0 0 15px 0;
     color: #94a3b8;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    text-align: center;
 }
 
+/* Thùng chứa bọc ngoài để quản lý kích thước */
 .app-container {
     border: 2px solid #334155;
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     background-color: #1e293b;
+
+    /* Giới hạn vùng hiển thị tối đa theo kích thước màn hình người dùng */
+    width: 90vw;
+    /* Chiếm tối đa 90% chiều rộng màn hình */
+    max-width: 1280px;
+    /* Không vượt quá kích thước thật */
+    aspect-ratio: 16 / 9;
+    /* Ép khung hình luôn giữ đúng tỷ lệ HD tránh méo hình */
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 #webcam {
     display: none;
 }
 
+/* Canvas xử lý co giãn thông minh */
 #output_canvas {
     display: block;
     transform: scaleX(-1);
-    /* Lật gương bằng CSS */
-    width: 1280px;
-    height: 720px;
+    /* Giữ nguyên hiệu ứng lật gương */
+
+    /* Ép Canvas tự co nhỏ lại theo kích thước của .app-container bọc ngoài */
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Đảm bảo toàn bộ khung hình camera lọt lòng bên trong */
 }
