@@ -39,6 +39,6 @@ p {
     display: block;
     transform: scaleX(-1);
     /* Lật gương bằng CSS */
-    width: 640px;
-    height: 480px;
+    width: 1280px;
+    height: 720px;
 }

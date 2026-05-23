@@ -2,10 +2,16 @@ const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('output_canvas');
 const canvasCtx = canvasElement.getContext('2d');
 
+// CẤU HÌNH CHO MÀN HÌNH 1280x720:
+// Đẩy tọa độ X ra vùng từ 1080px đến 1220px (Sát rìa phải màn hình lớn)
+// Tăng chiều cao mỗi ô lên 80px và kéo dài chiều rộng để dễ bấm trúng bằng ngón tay
 const chordsConfig = [
-    { name: 'C', xMin: 480, xMax: 580, yMin: 60, yMax: 140 },
-    { name: 'D', xMin: 480, xMax: 580, yMin: 180, yMax: 260 },
-    { name: 'G', xMin: 480, xMax: 580, yMin: 300, yMax: 380 }
+    { name: 'C', xMin: 1080, xMax: 1220, yMin: 40, yMax: 120 },
+    { name: 'D', xMin: 1080, xMax: 1220, yMin: 150, yMax: 230 },
+    { name: 'G', xMin: 1080, xMax: 1220, yMin: 260, yMax: 340 },
+    { name: 'Em', xMin: 1080, xMax: 1220, yMin: 370, yMax: 450 },
+    { name: 'Am', xMin: 1080, xMax: 1220, yMin: 480, yMax: 560 },
+    { name: 'F', xMin: 1080, xMax: 1220, yMin: 590, yMax: 670 }
 ];
 
 const AppState = {
@@ -17,14 +23,72 @@ const AppState = {
     rightHand: {
         historyY: [],
         prevSmoothedY: null,
-        lastStrumTime: 0
+        lastStrumTime: 0,
+        lostFrameCount: 0
     },
     isStrummingFlash: false,
     smoothedHands: []
 };
 
-const SMOOTHING_FACTOR = 0.35;
+const SMOOTHING_LEFT = 0.35;
+const SMOOTHING_RIGHT = 0.55;
 
+// ==========================================
+// AUDIO ENGINE: KHÔNG ĐỔI
+// ==========================================
+let audioCtx = null;
+const chordFrequencies = {
+    'C': [130.81, 164.81, 196.00, 261.63, 329.63],
+    'D': [146.83, 220.00, 293.66, 369.99, 440.00],
+    'G': [98.00, 123.47, 146.83, 196.00, 392.00],
+    'Em': [82.41, 130.81, 164.81, 196.00, 329.63],
+    'Am': [110.00, 146.83, 220.00, 261.63, 440.00],
+    'F': [87.31, 130.81, 174.61, 261.63, 349.23]
+};
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+}
+
+function playGuitarChord(chordName, velocity) {
+    initAudio();
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
+    const freqs = chordFrequencies[chordName];
+    if (!freqs) return;
+
+    const volume = Math.min(Math.max(velocity / 60, 0.2), 0.85); // Tăng trần âm lượng một chút cho màn hình rộng
+    const now = audioCtx.currentTime;
+
+    freqs.forEach((freq, index) => {
+        const strumDelay = index * 0.012;
+        const time = now + strumDelay;
+
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, time);
+
+        gainNode.gain.setValueAtTime(0, time);
+        gainNode.gain.linearRampToValueAtTime(volume, time + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, time + 1.1);
+
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        osc.start(time);
+        osc.stop(time + 1.1);
+    });
+}
+
+// ==========================================
+// LOGIC HIỂN THỊ & XỬ LÝ KHUNG HÌNH LỚN
+// ==========================================
 function drawChordCards() {
     chordsConfig.forEach(chord => {
         const isSelected = AppState.leftHand.selectedChord === chord.name;
@@ -44,12 +108,19 @@ function drawChordCards() {
             canvasCtx.strokeStyle = "#475569";
         }
 
-        canvasCtx.fillRect(chord.xMin, chord.yMin, chord.xMax - chord.xMin, chord.yMax - chord.yMin);
-        canvasCtx.strokeRect(chord.xMin, chord.yMin, chord.xMax - chord.xMin, chord.yMax - chord.yMin);
+        canvasCtx.beginPath();
+        const radius = 8; // Tăng bo tròn cho hợp với ô to
+        const x = chord.xMin;
+        const y = chord.yMin;
+        const width = chord.xMax - chord.xMin;
+        const height = chord.yMax - chord.yMin;
+        canvasCtx.roundRect(x, y, width, height, radius);
+        canvasCtx.fill();
+        canvasCtx.stroke();
 
-        canvasCtx.translate(chord.xMin + (chord.xMax - chord.xMin) / 2, chord.yMin + (chord.yMax - chord.yMin) / 2);
+        canvasCtx.translate(chord.xMin + width / 2, chord.yMin + height / 2);
         canvasCtx.scale(-1, 1);
-        canvasCtx.font = "bold 24px sans-serif";
+        canvasCtx.font = "bold 24px sans-serif"; // Trả lại font size 24px vì ô bấm đã to lên
         canvasCtx.fillStyle = isSelected ? (AppState.isStrummingFlash ? "#ffffff" : "#10b981") : (isHovered ? "#38bdf8" : "#94a3b8");
         canvasCtx.textAlign = "center";
         canvasCtx.textBaseline = "middle";
@@ -74,7 +145,7 @@ function handleLeftHandChord(indexFingerLandmark) {
             AppState.leftHand.hoveredChord = currentHit.name;
             AppState.leftHand.touchStartTime = now;
         } else {
-            if (AppState.leftHand.selectedChord !== currentHit.name && (now - AppState.leftHand.touchStartTime) >= 180) {
+            if (AppState.leftHand.selectedChord !== currentHit.name && (now - AppState.leftHand.touchStartTime) >= 120) {
                 AppState.leftHand.selectedChord = currentHit.name;
                 console.log(`%c🎵 HỢP ÂM [ ${currentHit.name} ] SẴN SÀNG!`, "color: #10b981; font-weight: bold;");
             }
@@ -87,9 +158,9 @@ function handleLeftHandChord(indexFingerLandmark) {
 
 let isStrummingActive = false;
 
-function handleRightHandStrum(wristLandmark) {
+function handleRightHandStrum(handLandmarks) {
     const now = performance.now();
-    const rawY = wristLandmark.y * canvasElement.height;
+    const rawY = (handLandmarks[0].y + handLandmarks[5].y + handLandmarks[9].y + handLandmarks[17].y) / 4 * canvasElement.height;
 
     AppState.rightHand.historyY.push(rawY);
     if (AppState.rightHand.historyY.length > 3) {
@@ -102,7 +173,8 @@ function handleRightHandStrum(wristLandmark) {
     if (AppState.rightHand.prevSmoothedY !== null) {
         const deltaY = smoothedY - AppState.rightHand.prevSmoothedY;
 
-        if (deltaY > 22 && (now - AppState.rightHand.lastStrumTime) > 300) {
+        // Trên màn hình to, quãng đường vung tay dài hơn -> tăng nhẹ ngưỡng kích hoạt lên 28px để chống gảy nhầm
+        if (deltaY > 28 && (now - AppState.rightHand.lastStrumTime) > 250) {
             if (!isStrummingActive) {
                 if (AppState.leftHand.selectedChord) {
                     triggerPlaySound(AppState.leftHand.selectedChord, deltaY);
@@ -122,6 +194,7 @@ function handleRightHandStrum(wristLandmark) {
 
 function triggerPlaySound(chordName, velocity) {
     console.log(`%c🎸 [KÍCH HOẠT CHUẨN] Hợp âm: ${chordName} | Lực gảy: ${Math.round(velocity)}px`, "color: #fbbf24; font-weight: bold; font-size: 14px;");
+    playGuitarChord(chordName, velocity);
     AppState.isStrummingFlash = true;
     setTimeout(() => {
         AppState.isStrummingFlash = false;
@@ -139,6 +212,8 @@ function onResults(results) {
     let rightHandDetected = false;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        AppState.rightHand.lostFrameCount = 0;
+
         if (!AppState.smoothedHands || AppState.smoothedHands.length !== results.multiHandLandmarks.length) {
             AppState.smoothedHands = results.multiHandLandmarks.map(hand =>
                 hand.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }))
@@ -147,41 +222,37 @@ function onResults(results) {
 
         for (let i = 0; i < results.multiHandLandmarks.length; i++) {
             const rawLandmarks = results.multiHandLandmarks[i];
-
-            for (let j = 0; j < rawLandmarks.length; j++) {
-                AppState.smoothedHands[i][j].x += SMOOTHING_FACTOR * (rawLandmarks[j].x - AppState.smoothedHands[i][j].x);
-                AppState.smoothedHands[i][j].y += SMOOTHING_FACTOR * (rawLandmarks[j].y - AppState.smoothedHands[i][j].y);
-            }
-
-            const landmarks = AppState.smoothedHands[i];
-            const wrist = landmarks[0];
-            const wristPixelX = wrist.x * canvasElement.width;
-
             const rawLabel = results.multiHandedness[i].label;
             let realHandLabel = (rawLabel === 'Left') ? 'TAY PHẢI' : 'TAY TRÁI';
 
-            if (wristPixelX > 320 && realHandLabel === 'TAY PHẢI') {
-                realHandLabel = 'TAY TRÁI';
-            }
-            if (wristPixelX <= 320 && realHandLabel === 'TAY TRÁI') {
-                realHandLabel = 'TAY PHẢI';
+            // BIÊN GIỚI CHỐNG LOẠN NHÃN MỚI: Đổi mốc phân đôi màn hình thành 640 (1280 / 2)
+            const wristPixelX = rawLandmarks[0].x * canvasElement.width;
+            if (wristPixelX > 640 && realHandLabel === 'TAY PHẢI') realHandLabel = 'TAY TRÁI';
+            if (wristPixelX <= 640 && realHandLabel === 'TAY TRÁI') realHandLabel = 'TAY PHẢI';
+
+            const currentFactor = (realHandLabel === 'TAY TRÁI') ? SMOOTHING_LEFT : SMOOTHING_RIGHT;
+
+            for (let j = 0; j < rawLandmarks.length; j++) {
+                AppState.smoothedHands[i][j].x += currentFactor * (rawLandmarks[j].x - AppState.smoothedHands[i][j].x);
+                AppState.smoothedHands[i][j].y += currentFactor * (rawLandmarks[j].y - AppState.smoothedHands[i][j].y);
             }
 
+            const landmarks = AppState.smoothedHands[i];
             const handColor = (realHandLabel === 'TAY TRÁI') ? '#38bdf8' : '#fbbf24';
 
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: handColor, lineWidth: 3 });
-            drawLandmarks(canvasCtx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 3 });
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: handColor, lineWidth: 3.5 });
+            drawLandmarks(canvasCtx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 3.5 });
 
             if (realHandLabel === 'TAY TRÁI') {
                 leftHandDetected = true;
                 handleLeftHandChord(landmarks[8]);
             } else if (realHandLabel === 'TAY PHẢI') {
                 rightHandDetected = true;
-                handleRightHandStrum(landmarks[0]);
+                handleRightHandStrum(landmarks);
             }
 
             canvasCtx.save();
-            canvasCtx.translate(wrist.x * canvasElement.width, wrist.y * canvasElement.height);
+            canvasCtx.translate(landmarks[0].x * canvasElement.width, landmarks[0].y * canvasElement.height);
             canvasCtx.scale(-1, 1);
             canvasCtx.font = "bold 16px sans-serif";
             canvasCtx.fillStyle = handColor;
@@ -189,16 +260,20 @@ function onResults(results) {
             canvasCtx.fillText(realHandLabel, 0, 25);
             canvasCtx.restore();
         }
-    } else {
-        AppState.smoothedHands = [];
     }
 
     if (!leftHandDetected) {
         AppState.leftHand.hoveredChord = null;
         AppState.leftHand.selectedChord = null;
     }
+
     if (!rightHandDetected) {
-        AppState.rightHand.prevSmoothedY = null;
+        AppState.rightHand.lostFrameCount++;
+        if (AppState.rightHand.lostFrameCount > 8) {
+            AppState.rightHand.prevSmoothedY = null;
+            AppState.rightHand.historyY = [];
+            AppState.smoothedHands = [];
+        }
     }
 
     canvasCtx.restore();
@@ -211,18 +286,23 @@ const hands = new Hands({
 hands.setOptions({
     maxNumHands: 2,
     modelComplexity: 1,
-    minDetectionConfidence: 0.55,
-    minTrackingConfidence: 0.55
+    minDetectionConfidence: 0.45,
+    minTrackingConfidence: 0.50
 });
 
 hands.onResults(onResults);
 
+// CẬP NHẬT CAMERA: Chuyển luồng bắt hình ảnh của Webcam lên HD 1280x720
 const camera = new Camera(videoElement, {
     onFrame: async () => {
         await hands.send({ image: videoElement });
     },
-    width: 640,
-    height: 480
+    width: 1280,
+    height: 720
+});
+
+window.addEventListener('click', () => {
+    initAudio();
 });
 
 camera.start().catch(err => console.error(err));
