@@ -1,0 +1,44 @@
+body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: #0f172a;
+    font-family: sans-serif;
+    color: #f8fafc;
+}
+
+h1 {
+    margin-bottom: 5px;
+    font-size: 1.5rem;
+}
+
+p {
+    margin-bottom: 20px;
+    color: #94a3b8;
+    font-size: 0.9rem;
+}
+
+.app-container {
+    border: 2px solid #334155;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    background-color: #1e293b;
+}
+
+#webcam {
+    display: none;
+}
+
+#output_canvas {
+    display: block;
+    transform: scaleX(-1);
+    /* Lật gương bằng CSS */
+    width: 640px;
+    height: 480px;
+}
