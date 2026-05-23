@@ -2,9 +2,7 @@ const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('output_canvas');
 const canvasCtx = canvasElement.getContext('2d');
 
-// CẤU HÌNH CHO MÀN HÌNH 1280x720:
-// Đẩy tọa độ X ra vùng từ 1080px đến 1220px (Sát rìa phải màn hình lớn)
-// Tăng chiều cao mỗi ô lên 80px và kéo dài chiều rộng để dễ bấm trúng bằng ngón tay
+// CẤU HÌNH MÀN HÌNH HD 1280x720:
 const chordsConfig = [
     { name: 'C', xMin: 1080, xMax: 1220, yMin: 40, yMax: 120 },
     { name: 'D', xMin: 1080, xMax: 1220, yMin: 150, yMax: 230 },
@@ -30,22 +28,21 @@ const AppState = {
     smoothedHands: []
 };
 
-const SMOOTHING_LEFT = 0.35;
-const SMOOTHING_RIGHT = 0.55;
+// ĐIỀU CHỈNH LỌC MƯỢT: Khóa chặt và bám dính khung xương khi di chuyển
+const SMOOTHING_LEFT = 0.40;
+const SMOOTHING_RIGHT = 0.70;
 
 // ==========================================
-// AUDIO ENGINE NÂNG CẤP: GIẢ LẬP GUITAR AKUSTIK THỰC TẾ
+// AUDIO ENGINE: GUITAR NYLON SIÊU ẤM - SUSTAIN 7 GIÂY
 // ==========================================
 let audioCtx = null;
-
-// Tần số chuẩn của 6 hợp âm (Mỗi hợp âm gồm 5 nốt phối theo thế tay guitar thùng ngoài đời)
 const chordFrequencies = {
-    'C': [130.81, 164.81, 196.00, 261.63, 329.63], // C3 - E3 - G3 - C4 - E4
-    'D': [146.83, 220.00, 293.66, 369.99, 440.00], // D3 - A3 - D4 - F#4 - A4
-    'G': [98.00, 123.47, 146.83, 196.00, 392.00], // G2 - B2 - D3 - G3 - G4
-    'Em': [82.41, 130.81, 164.81, 196.00, 329.63], // E2 - C3 - E3 - G3 - E4
-    'Am': [110.00, 146.83, 220.00, 261.63, 440.00], // A2 - D3 - A3 - C4 - A4
-    'F': [87.31, 130.81, 174.61, 261.63, 349.23]  // F2 - C3 - F3 - C4 - F4
+    'C': [130.81, 164.81, 196.00, 261.63, 329.63],
+    'D': [146.83, 220.00, 293.66, 369.99, 440.00],
+    'G': [98.00, 123.47, 146.83, 196.00, 392.00],
+    'Em': [82.41, 130.81, 164.81, 196.00, 329.63],
+    'Am': [110.00, 146.83, 220.00, 261.63, 440.00],
+    'F': [87.31, 130.81, 174.61, 261.63, 349.23]
 };
 
 function initAudio() {
@@ -63,68 +60,57 @@ function playGuitarChord(chordName, velocity) {
     const freqs = chordFrequencies[chordName];
     if (!freqs) return;
 
-    // Tính toán âm lượng dựa trên lực vung tay phải
-    const baseVolume = Math.min(Math.max(velocity / 60, 0.25), 0.75);
+    // Giới hạn nhẹ đỉnh âm lượng để giữ chất mộc ấm, không bị vỡ/gắt tiếng
+    const baseVolume = Math.min(Math.max(velocity / 65, 0.35), 0.65);
     const now = audioCtx.currentTime;
 
-    // Duyệt qua từng dây trong hợp âm
     freqs.forEach((fundamentalFreq, stringIndex) => {
-        // Tải hiệu ứng rải dây cách nhau 18ms (giúp tiếng đàn nghe tách bạch, tự nhiên hơn)
-        const strumDelay = stringIndex * 0.018;
+        const strumDelay = stringIndex * 0.025; // Rải dây mượt mà, tự nhiên
         const startTime = now + strumDelay;
 
-        // KÉO DÀI THỜI GIAN VANG: Tăng từ 1.0 giây lên 2.5 giây cho tiếng ngân sâu
-        const sustainTime = 2.5;
+        // ĐẨY SUSTAIN LÊN ĐÚNG 7.0 GIÂY
+        const sustainTime = 7.0;
 
-        // Tạo cụm Gain Node tổng cho nốt nhạc này
         const noteGain = audioCtx.createGain();
         noteGain.gain.setValueAtTime(0, startTime);
-        noteGain.gain.linearRampToValueAtTime(baseVolume, startTime + 0.008); // Nhấn mạnh tức thì lúc gảy
-        noteGain.gain.exponentialRampToValueAtTime(0.001, startTime + sustainTime); // Ngân vang nhỏ dần trong 2.5s
+        noteGain.gain.linearRampToValueAtTime(baseVolume, startTime + 0.025); // Tạo lực búng ngón tay mượt mà hơn
 
-        // 🎻 THUẬT TOÁN TẠO HOẠ LẠI BỒI ÂM (Tạo 3 tầng sóng phụ để giả lập độ mộc gỗ)
-        // Tầng 1: Sóng nốt gốc (Sóng tam giác dịu - chiếm 60% năng lượng)
-        createOscillator(fundamentalFreq, 'triangle', 0.6, startTime, sustainTime, noteGain);
+        // Vuốt đuôi âm thanh nhỏ dần theo hàm Logarit cực mịn trong suốt 7 giây
+        noteGain.gain.exponentialRampToValueAtTime(0.000001, startTime + sustainTime);
 
-        // Tầng 2: Họa âm bậc 2 (Tần số gấp đôi, tạo độ sáng sắc nét - chiếm 25% năng lượng)
-        createOscillator(fundamentalFreq * 2, 'sawtooth', 0.25, startTime, sustainTime, noteGain);
+        // 🎻 MIX ĐA TẦNG SÓNG TỐI ƯU ĐỘ ẤM:
+        // Tăng tỷ lệ sóng SIN tròn nốt lên 75%, giảm bớt họa âm cao chói
+        createOscillator(fundamentalFreq, 'sine', 0.75, startTime, sustainTime, noteGain);
+        createOscillator(fundamentalFreq * 2, 'triangle', 0.20, startTime, sustainTime, noteGain);
+        createOscillator(fundamentalFreq * 3, 'sine', 0.05, startTime, sustainTime, noteGain);
 
-        // Tầng 3: Họa âm bậc 3 (Tần số gấp ba, tạo độ ấm dày - chiếm 15% năng lượng)
-        createOscillator(fundamentalFreq * 3, 'triangle', 0.15, startTime, sustainTime, noteGain);
-
-        // Thêm một bộ lọc thấp (LowPass Filter) để cắt bớt tiếng chói điện tử, giữ lại dải âm mộc trầm ấm
+        // 🎛️ BỘ LỌC TẦN SỐ TRẦM ẤM SÂU (Cắt hoàn toàn dải treble chói)
         const filterNode = audioCtx.createBiquadFilter();
         filterNode.type = 'lowpass';
-        // Tần số filter giảm dần theo thời gian giống như dây đàn bớt rung động
-        filterNode.frequency.setValueAtTime(1200, startTime);
-        filterNode.frequency.exponentialRampToValueAtTime(300, startTime + sustainTime);
+        // Hạ tần số bắt đầu xuống 550Hz để tiếng đàn cực kỳ ấm áp và dầy dặn
+        filterNode.frequency.setValueAtTime(550, startTime);
+        // Đuôi âm thanh lịm dần về dải bass sâu 120Hz
+        filterNode.frequency.exponentialRampToValueAtTime(120, startTime + sustainTime);
 
-        // Kết nối chuỗi âm thanh: Ô tạo sóng -> Note Gain -> Bộ lọc -> Loa máy tính
         noteGain.connect(filterNode);
         filterNode.connect(audioCtx.destination);
     });
 }
 
-// Hàm phụ trợ tạo nhanh các ống dao động âm thanh
 function createOscillator(freq, type, volumeRatio, startTime, duration, destinationGain) {
     const osc = audioCtx.createOscillator();
     const oscGain = audioCtx.createGain();
-
     osc.type = type;
     osc.frequency.setValueAtTime(freq, startTime);
-
-    // Gán tỷ lệ âm lượng cho từng tầng họa âm
     oscGain.gain.setValueAtTime(volumeRatio, startTime);
-
     osc.connect(oscGain);
     oscGain.connect(destinationGain);
-
     osc.start(startTime);
     osc.stop(startTime + duration);
 }
 
 // ==========================================
-// LOGIC HIỂN THỊ & XỬ LÝ KHUNG HÌNH LỚN
+// LOGIC HIỂN THỊ & XỬ LÝ KHUNG HÌNH (GIỮ NGUYÊN BẢN CHỐNG MẤT TAY)
 // ==========================================
 function drawChordCards() {
     chordsConfig.forEach(chord => {
@@ -146,7 +132,7 @@ function drawChordCards() {
         }
 
         canvasCtx.beginPath();
-        const radius = 8; // Tăng bo tròn cho hợp với ô to
+        const radius = 8;
         const x = chord.xMin;
         const y = chord.yMin;
         const width = chord.xMax - chord.xMin;
@@ -157,12 +143,11 @@ function drawChordCards() {
 
         canvasCtx.translate(chord.xMin + width / 2, chord.yMin + height / 2);
         canvasCtx.scale(-1, 1);
-        canvasCtx.font = "bold 24px sans-serif"; // Trả lại font size 24px vì ô bấm đã to lên
+        canvasCtx.font = "bold 24px sans-serif";
         canvasCtx.fillStyle = isSelected ? (AppState.isStrummingFlash ? "#ffffff" : "#10b981") : (isHovered ? "#38bdf8" : "#94a3b8");
         canvasCtx.textAlign = "center";
         canvasCtx.textBaseline = "middle";
         canvasCtx.fillText(chord.name, 0, 0);
-
         canvasCtx.restore();
     });
 }
@@ -197,10 +182,17 @@ let isStrummingActive = false;
 
 function handleRightHandStrum(handLandmarks) {
     const now = performance.now();
-    const rawY = (handLandmarks[0].y + handLandmarks[5].y + handLandmarks[9].y + handLandmarks[17].y) / 4 * canvasElement.height;
+
+    const rawY = (
+        handLandmarks[0].y +
+        handLandmarks[5].y +
+        handLandmarks[9].y +
+        handLandmarks[13].y +
+        handLandmarks[17].y
+    ) / 5 * canvasElement.width;
 
     AppState.rightHand.historyY.push(rawY);
-    if (AppState.rightHand.historyY.length > 3) {
+    if (AppState.rightHand.historyY.length > 4) {
         AppState.rightHand.historyY.shift();
     }
 
@@ -210,13 +202,10 @@ function handleRightHandStrum(handLandmarks) {
     if (AppState.rightHand.prevSmoothedY !== null) {
         const deltaY = smoothedY - AppState.rightHand.prevSmoothedY;
 
-        // Trên màn hình to, quãng đường vung tay dài hơn -> tăng nhẹ ngưỡng kích hoạt lên 28px để chống gảy nhầm
-        if (deltaY > 28 && (now - AppState.rightHand.lastStrumTime) > 250) {
+        if (deltaY > 24 && (now - AppState.rightHand.lastStrumTime) > 220) {
             if (!isStrummingActive) {
                 if (AppState.leftHand.selectedChord) {
                     triggerPlaySound(AppState.leftHand.selectedChord, deltaY);
-                } else {
-                    console.log("⚠️ Tay phải gảy nhưng Tay Trái chưa chọn hợp âm nào!");
                 }
                 AppState.rightHand.lastStrumTime = now;
                 isStrummingActive = true;
@@ -262,7 +251,6 @@ function onResults(results) {
             const rawLabel = results.multiHandedness[i].label;
             let realHandLabel = (rawLabel === 'Left') ? 'TAY PHẢI' : 'TAY TRÁI';
 
-            // BIÊN GIỚI CHỐNG LOẠN NHÃN MỚI: Đổi mốc phân đôi màn hình thành 640 (1280 / 2)
             const wristPixelX = rawLandmarks[0].x * canvasElement.width;
             if (wristPixelX > 640 && realHandLabel === 'TAY PHẢI') realHandLabel = 'TAY TRÁI';
             if (wristPixelX <= 640 && realHandLabel === 'TAY TRÁI') realHandLabel = 'TAY PHẢI';
@@ -306,7 +294,11 @@ function onResults(results) {
 
     if (!rightHandDetected) {
         AppState.rightHand.lostFrameCount++;
-        if (AppState.rightHand.lostFrameCount > 8) {
+        if (AppState.rightHand.lostFrameCount <= 20 && AppState.smoothedHands.length > 0) {
+            rightHandDetected = true;
+            const fallbackHandIndex = AppState.smoothedHands.length - 1;
+            handleRightHandStrum(AppState.smoothedHands[fallbackHandIndex]);
+        } else if (AppState.rightHand.lostFrameCount > 20) {
             AppState.rightHand.prevSmoothedY = null;
             AppState.rightHand.historyY = [];
             AppState.smoothedHands = [];
@@ -323,13 +315,12 @@ const hands = new Hands({
 hands.setOptions({
     maxNumHands: 2,
     modelComplexity: 1,
-    minDetectionConfidence: 0.45,
-    minTrackingConfidence: 0.50
+    minDetectionConfidence: 0.35,
+    minTrackingConfidence: 0.40
 });
 
 hands.onResults(onResults);
 
-// CẬP NHẬT CAMERA: Chuyển luồng bắt hình ảnh của Webcam lên HD 1280x720
 const camera = new Camera(videoElement, {
     onFrame: async () => {
         await hands.send({ image: videoElement });
