@@ -14,7 +14,9 @@ export default function GuitarCanvas() {
         rightHand: { activeStringIndex: null, lostFrameCount: 0,
                     lastTriggerTimes: [0,0,0,0,0,0],
                     stringVibrations: [0,0,0,0,0,0],
-                    prevY: null },
+                    prevY: null,
+                    prevFingerX: null,
+                    },
         smoothedHands: [],
     });
 
@@ -142,27 +144,57 @@ function handleLeftHand(tip, chords, state) {
 
 function handleRightHand(lm, strings, state, playSingleString) {
     const now = performance.now();
+
     const x = lm[8].x * 1280;
     const y = lm[8].y * 720;
 
+    const prevX = state.rightHand.prevFingerX;
+
+    if (prevX === null) {
+        state.rightHand.prevFingerX = x;
+        return;
+    }
+
+    const velocity = Math.abs(x - prevX);
+
+    state.rightHand.prevFingerX = x;
+
+    // tìm dây đang chạm
     const hit = strings.find(s =>
-        x >= s.xMin && x <= s.xMax && y >= s.yMin && y <= s.yMax
+        x >= s.xMin &&
+        x <= s.xMax &&
+        y >= s.yMin &&
+        y <= s.yMax
     );
 
-    if (hit) {
-        if (state.rightHand.activeStringIndex !== hit.index) {
-            state.rightHand.activeStringIndex = hit.index;
-            if (now - state.rightHand.lastTriggerTimes[hit.index] > 160) {
-                if (state.leftHand.selectedChord) {
-                    playSingleString(state.leftHand.selectedChord, hit.index);
-                    state.rightHand.stringVibrations[hit.index] = now;
-                }
-                state.rightHand.lastTriggerTimes[hit.index] = now;
-            }
-        }
-    } else {
+    if (!hit) {
         state.rightHand.activeStringIndex = null;
+        return;
     }
+
+    // phải quét đủ nhanh mới tính là gảy
+    if (velocity < 5) return;
+
+    // chống spam
+    if (
+        now - state.rightHand.lastTriggerTimes[hit.index]
+        < 300
+    ) {
+        return;
+    }
+
+    state.rightHand.activeStringIndex = hit.index;
+
+    if (state.leftHand.selectedChord) {
+        playSingleString(
+            state.leftHand.selectedChord,
+            hit.index
+        );
+
+        state.rightHand.stringVibrations[hit.index] = now;
+    }
+
+    state.rightHand.lastTriggerTimes[hit.index] = now;
 }
 
 function drawStrings(ctx, strings, state, W, H) {
