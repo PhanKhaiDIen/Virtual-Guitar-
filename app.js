@@ -1,27 +1,33 @@
-const videoElement = document.getElementById('webcam');
+﻿const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('output_canvas');
 const canvasCtx = canvasElement.getContext('2d');
+const W = canvasElement.width;   // 1280
+const H = canvasElement.height;  // 720
 
 // 1. CẤU HÌNH VÙNG CHỌN HỢP ÂM TAY TRÁI (Bên Phải Màn Hình)
 const chordsConfig = [
-    { name: 'C', xMin: 1080, xMax: 1220, yMin: 40, yMax: 120 },
-    { name: 'D', xMin: 1080, xMax: 1220, yMin: 150, yMax: 230 },
-    { name: 'G', xMin: 1080, xMax: 1220, yMin: 260, yMax: 340 },
-    { name: 'Em', xMin: 1080, xMax: 1220, yMin: 370, yMax: 450 },
-    { name: 'Am', xMin: 1080, xMax: 1220, yMin: 480, yMax: 560 },
-    { name: 'F', xMin: 1080, xMax: 1220, yMin: 590, yMax: 670 }
+    { name: 'C',  xMin: W*0.84, xMax: W*0.95, yMin: H*0.06, yMax: H*0.17 },
+    { name: 'D',  xMin: W*0.84, xMax: W*0.95, yMin: H*0.21, yMax: H*0.32 },
+    { name: 'G',  xMin: W*0.84, xMax: W*0.95, yMin: H*0.36, yMax: H*0.47 },
+    { name: 'Em', xMin: W*0.84, xMax: W*0.95, yMin: H*0.51, yMax: H*0.62 },
+    { name: 'Am', xMin: W*0.84, xMax: W*0.95, yMin: H*0.67, yMax: H*0.78 },
+    { name: 'F',  xMin: W*0.84, xMax: W*0.95, yMin: H*0.82, yMax: H*0.93 },
 ];
 
 // 2. CẤU HÌNH MỚI: 6 Ô BẤM XẾP THEO HÀNG NGANG CHỐNG TRƯỢT TAY
 // Toàn bộ các ô có cùng chiều cao (Y: 150px đến 400px), xếp rộng từ X: 40px đến 580px
 // Thứ tự từ trái sang phải: Dây 6 (Trầm nhất) -> Dây 1 (Cao nhất) để thuận tay gảy xuôi
+const stringStartX = W * 0.55;
+const stringEndX   = W * 0.95;
+const stringWidth  = (stringEndX - stringStartX) / 6;
+
 const stringsConfig = [
-    { index: 5, label: 'Dây 6 (E)', xMin: 40, xMax: 120, yMin: 150, yMax: 400 },
-    { index: 4, label: 'Dây 5 (A)', xMin: 130, xMax: 210, yMin: 150, yMax: 400 },
-    { index: 3, label: 'Dây 4 (D)', xMin: 220, xMax: 300, yMin: 150, yMax: 400 },
-    { index: 2, label: 'Dây 3 (G)', xMin: 310, xMax: 390, yMin: 150, yMax: 400 },
-    { index: 1, label: 'Dây 2 (B)', xMin: 40, xMax: 480, yMin: 150, yMax: 400 }, // Sửa khoảng cách X thưa đều
-    { index: 0, label: 'Dây 1 (E)', xMin: 490, xMax: 570, yMin: 150, yMax: 400 }
+    { index: 5, label: 'Dây 6 (E)', xMin: stringStartX + stringWidth*0, xMax: stringStartX + stringWidth*1, yMin: H*0.21, yMax: H*0.56 },
+    { index: 4, label: 'Dây 5 (A)', xMin: stringStartX + stringWidth*1, xMax: stringStartX + stringWidth*2, yMin: H*0.21, yMax: H*0.56 },
+    { index: 3, label: 'Dây 4 (D)', xMin: stringStartX + stringWidth*2, xMax: stringStartX + stringWidth*3, yMin: H*0.21, yMax: H*0.56 },
+    { index: 2, label: 'Dây 3 (G)', xMin: stringStartX + stringWidth*3, xMax: stringStartX + stringWidth*4, yMin: H*0.21, yMax: H*0.56 },
+    { index: 1, label: 'Dây 2 (B)', xMin: stringStartX + stringWidth*4, xMax: stringStartX + stringWidth*5, yMin: H*0.21, yMax: H*0.56 },
+    { index: 0, label: 'Dây 1 (E)', xMin: stringStartX + stringWidth*5, xMax: stringStartX + stringWidth*6, yMin: H*0.21, yMax: H*0.56 },
 ];
 
 // Căn chỉnh lại chính xác tọa độ X cho các ô xếp hàng ngang không bị lệch
@@ -34,8 +40,14 @@ stringsConfig[5] = { index: 0, label: 'Dây 1 (E)', xMin: 500, xMax: 580, yMin: 
 
 const AppState = {
     leftHand: { hoveredChord: null, selectedChord: null, touchStartTime: 0 },
-    rightHand: { activeStringIndex: null, lostFrameCount: 0, lastTriggerTimes: [0, 0, 0, 0, 0, 0] },
-    isStrummingFlash: false, smoothedHands: []
+    isStrummingFlash: false, smoothedHands: [],
+    rightHand: { 
+    activeStringIndex: null, 
+    lostFrameCount: 0, 
+    lastTriggerTimes: [0,0,0,0,0,0], 
+    prevX: null,
+    prevY: null  // ← thêm
+}
 };
 
 const SMOOTHING_LEFT = 0.40; const SMOOTHING_RIGHT = 0.70;
@@ -144,51 +156,95 @@ function createOscillator(freq, type, volumeRatio, startTime, duration, destinat
 // LOGIC ĐỒ HỌA MỚI: Ô BẤM DỌC XẾP THEO HÀNG NGANG (MÀU XANH NEON)
 // ==========================================
 function drawGuitarStrings() {
-    stringsConfig.forEach(string => {
-        const isActive = AppState.rightHand.activeStringIndex === string.index;
-        canvasCtx.save();
+    const fretboardX = stringsConfig[0].xMin - 14;
+    const fretboardY = H * 0.18;
+    const fretboardW = stringsConfig[5].xMax - stringsConfig[0].xMin + 28;
+    const fretboardH = H * 0.42;
+    const fretCount = 7;
+    const now = performance.now();
 
-        // ==========================================
-        // CẤU HÌNH MÀU NỀN ĐỤC (BACKGROUND) CHO CÁC Ô PHÍM
-        // ==========================================
-        if (isActive) {
-            // Khi ngón tay chạm vào: Ô phím đổi sang nền Vàng Hổ Phách đục (độ mờ 0.45) để báo hiệu cực rõ
-            canvasCtx.fillStyle = "rgba(251, 191, 36, 0.45)";
-            canvasCtx.strokeStyle = "#fbbf24";
-            canvasCtx.lineWidth = 3;
-        } else {
-            // Khi bình thường: Đổ màu Xám Đen Đục (độ mờ 0.85 - gần như che hẳn nền video phía sau)
-            // Giúp tách biệt hoàn toàn ô bấm ra khỏi quần áo hay khung cảnh phía sau của bạn
-            canvasCtx.fillStyle = "rgba(21, 32, 43, 0.85)";
-            canvasCtx.strokeStyle = "rgba(16, 185, 129, 0.5)"; // Viền xanh lục neon mờ
-            canvasCtx.lineWidth = 2;
-        }
+    // Nền gỗ rosewood
+    canvasCtx.save();
+    const grad = canvasCtx.createLinearGradient(fretboardX, fretboardY, fretboardX + fretboardW, fretboardY);
+    grad.addColorStop(0,    '#1A0A0A');
+    grad.addColorStop(0.5,  '#3D1C02');
+    grad.addColorStop(1,    '#1A0A0A');
+    canvasCtx.fillStyle = grad;
+    canvasCtx.shadowColor = 'rgba(0,0,0,0.6)';
+    canvasCtx.shadowBlur = 24;
+    canvasCtx.shadowOffsetY = 12;
+    canvasCtx.beginPath();
+    canvasCtx.roundRect(fretboardX, fretboardY, fretboardW, fretboardH, 18);
+    canvasCtx.fill();
+    canvasCtx.restore();
 
-        // Vẽ khối hộp ô phím gảy
+    // Fret lines — nét liền ngang
+    canvasCtx.save();
+    canvasCtx.strokeStyle = 'rgba(200,200,200,0.30)';
+    canvasCtx.lineWidth = 1.5;
+    for (let f = 0; f <= fretCount; f++) {
+        const y = fretboardY + (fretboardH / fretCount) * f;
         canvasCtx.beginPath();
-        canvasCtx.roundRect(string.xMin, string.yMin, string.xMax - string.xMin, string.yMax - string.yMin, 10);
+        canvasCtx.moveTo(fretboardX + 10, y);
+        canvasCtx.lineTo(fretboardX + fretboardW - 10, y);
+        canvasCtx.stroke();
+    }
+    canvasCtx.restore();
+
+    // Dot markers fret 3, 5, 7
+    canvasCtx.save();
+    canvasCtx.fillStyle = 'rgba(245,230,200,0.80)';
+    [3, 5, 7].forEach(fret => {
+        if (fret > fretCount) return;
+        const y = fretboardY + (fretboardH / fretCount) * fret - (fretboardH / fretCount) * 0.5;
+        const x = fretboardX + fretboardW * 0.5;
+        canvasCtx.beginPath();
+        canvasCtx.arc(x, y, 6, 0, Math.PI * 2);
         canvasCtx.fill();
-        canvasCtx.stroke();
+    });
+    canvasCtx.restore();
 
-        // Vẽ một "Sợi dây" chạy dọc ở chính giữa ô phím
-        canvasCtx.beginPath();
-        canvasCtx.strokeStyle = isActive ? "#fbbf24" : "rgba(16, 185, 129, 0.6)";
-        canvasCtx.lineWidth = 1.5 + string.index * 0.6; // Độ dày sợi chỉ lõi tăng dần theo độ trầm của dây
-        canvasCtx.moveTo(string.xMin + (string.xMax - string.xMin) / 2, string.yMin);
-        canvasCtx.lineTo(string.xMin + (string.xMax - string.xMin) / 2, string.yMax);
-        canvasCtx.stroke();
+    // 6 dây đàn
+    stringsConfig.forEach(string => {
+        const centerX = (string.xMin + string.xMax) / 2;
+        const isActive = AppState.rightHand.activeStringIndex === string.index;
 
-        // Vẽ nhãn chữ "Dây 6"..."Dây 1" xoay dọc
+        // Độ dày: dây 1 (index 0) mỏng nhất, dây 6 (index 5) dày nhất
+        const thickness = 1.2 + string.index * 0.65;
+
+        // Màu: dây 1-3 (index 0-2) bạc, dây 4-6 (index 3-5) vàng đồng
+        const baseColor = string.index <= 2 ? '#C0C0C0' : '#B8860B';
+
+        // Vibration
+        const vibAge = now - (AppState.rightHand.lastTriggerTimes[string.index] || 0);
+        const amp = Math.max(0, 7 - vibAge * 0.007);
+
         canvasCtx.save();
-        canvasCtx.translate(string.xMin + (string.xMax - string.xMin) / 2, string.yMax - 30);
-        canvasCtx.scale(-1, 1);
-        canvasCtx.font = "bold 14px sans-serif";
-        canvasCtx.fillStyle = isActive ? "#fbbf24" : "#10b981"; // CHỮ XANH NEON RỰC RỠ
-        canvasCtx.textAlign = "center";
-        canvasCtx.textBaseline = "middle";
-        canvasCtx.fillText(string.label.split(" ")[0] + " " + string.label.split(" ")[1], 0, 0);
-        canvasCtx.restore();
+        canvasCtx.lineWidth = isActive ? thickness + 1.5 : thickness;
+        canvasCtx.strokeStyle = isActive ? '#FFFFFF' : baseColor;
+        canvasCtx.shadowColor = isActive ? 'rgba(255,255,255,0.85)' : 'transparent';
+        canvasCtx.shadowBlur  = isActive ? 20 : 0;
 
+        canvasCtx.beginPath();
+        for (let t = 0; t <= 1; t += 0.02) {
+            const y = string.yMin + (string.yMax - string.yMin) * t;
+            const wave = Math.sin(t * Math.PI * 5 + now * 0.018) * amp;
+            const x = centerX + wave;
+            t === 0 ? canvasCtx.moveTo(x, y) : canvasCtx.lineTo(x, y);
+        }
+        canvasCtx.stroke();
+
+        // Label dây
+        canvasCtx.scale(-1, 1);
+        canvasCtx.font = 'bold 12px sans-serif';
+        canvasCtx.fillStyle = isActive ? '#FFFFFF' : 'rgba(245,230,200,0.55)';
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        canvasCtx.fillText(
+            string.label.split(' ')[0] + ' ' + string.label.split(' ')[1],
+            -centerX,
+            string.yMax - 22
+        );
         canvasCtx.restore();
     });
 }
@@ -196,34 +252,46 @@ function drawGuitarStrings() {
 function drawChordCards() {
     chordsConfig.forEach(chord => {
         const isSelected = AppState.leftHand.selectedChord === chord.name;
-        const isHovered = AppState.leftHand.hoveredChord === chord.name;
+        const isHovered  = AppState.leftHand.hoveredChord  === chord.name;
+        const cw = chord.xMax - chord.xMin;
+        const ch = chord.yMax - chord.yMin;
 
         canvasCtx.save();
-        canvasCtx.lineWidth = 3;
 
-        if (isSelected) {
-            canvasCtx.fillStyle = "rgba(16, 185, 129, 0.2)";
-            canvasCtx.strokeStyle = "#10b981";
-        } else if (isHovered) {
-            canvasCtx.fillStyle = "rgba(56, 189, 248, 0.1)";
-            canvasCtx.strokeStyle = "#38bdf8";
-        } else {
-            canvasCtx.fillStyle = "rgba(51, 65, 85, 0.3)";
-            canvasCtx.strokeStyle = "#475569";
-        }
+        // Nền gỗ gradient
+        const woodGrad = canvasCtx.createLinearGradient(chord.xMin, chord.yMin, chord.xMin, chord.yMax);
+        woodGrad.addColorStop(0,   '#3D2010');
+        woodGrad.addColorStop(0.5, '#2C1810');
+        woodGrad.addColorStop(1,   '#1A0A00');
+        canvasCtx.fillStyle = woodGrad;
+
+        // Viền + glow
+        canvasCtx.strokeStyle = isSelected ? '#D4A017'
+                               : isHovered  ? '#F5E6C8'
+                               : 'rgba(245,230,200,0.18)';
+        canvasCtx.lineWidth   = isSelected ? 2.5 : 1.5;
+        canvasCtx.shadowColor = isSelected ? 'rgba(212,160,23,0.55)'
+                               : isHovered  ? 'rgba(245,230,200,0.30)'
+                               : 'rgba(0,0,0,0.45)';
+        canvasCtx.shadowBlur  = isSelected ? 22 : isHovered ? 14 : 10;
+        canvasCtx.shadowOffsetY = isSelected || isHovered ? 0 : 8;
 
         canvasCtx.beginPath();
-        canvasCtx.roundRect(chord.xMin, chord.yMin, chord.xMax - chord.xMin, chord.yMax - chord.yMin, 8);
+        canvasCtx.roundRect(chord.xMin, chord.yMin, cw, ch, 20);
         canvasCtx.fill();
         canvasCtx.stroke();
 
-        canvasCtx.translate(chord.xMin + (chord.xMax - chord.xMin) / 2, chord.yMin + (chord.yMax - chord.yMin) / 2);
+        // Chữ tên hợp âm
+        canvasCtx.translate(chord.xMin + cw / 2, chord.yMin + ch / 2);
         canvasCtx.scale(-1, 1);
-        canvasCtx.font = "bold 28px sans-serif";
-        canvasCtx.fillStyle = isSelected ? "#059669" : "#10b981"; // CHỮ XANH NEON
-        canvasCtx.textAlign = "center";
-        canvasCtx.textBaseline = "middle";
+        canvasCtx.font = 'bold 30px Georgia, serif';
+        canvasCtx.fillStyle = isSelected ? '#D4A017' : '#F5E6C8';
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        canvasCtx.shadowColor = isSelected ? 'rgba(212,160,23,0.7)' : 'transparent';
+        canvasCtx.shadowBlur  = isSelected ? 12 : 0;
         canvasCtx.fillText(chord.name, 0, 0);
+
         canvasCtx.restore();
     });
 }
@@ -250,7 +318,6 @@ function handleLeftHandChord(indexFingerLandmark) {
         }
     } else {
         AppState.leftHand.hoveredChord = null;
-        AppState.leftHand.selectedChord = null;
     }
 }
 
@@ -259,28 +326,33 @@ function handleRightHandPicking(handLandmarks) {
     const currentX = handLandmarks[8].x * canvasElement.width;
     const currentY = handLandmarks[8].y * canvasElement.height;
 
-    // Quét kiểm tra tọa độ xem ngón trỏ đang lọt lòng ô đứng nào
+    // Tính deltaY
+    const deltaY = AppState.rightHand.prevY !== null 
+        ? currentY - AppState.rightHand.prevY 
+        : 0;
+    AppState.rightHand.prevY = currentY;
+
     const currentStringHit = stringsConfig.find(string =>
         currentX >= string.xMin && currentX <= string.xMax &&
         currentY >= string.yMin && currentY <= string.yMax
     );
 
+    // Cập nhật dây đang đặt ngón (chưa phát tiếng)
     if (currentStringHit) {
-        if (AppState.rightHand.activeStringIndex !== currentStringHit.index) {
-            AppState.rightHand.activeStringIndex = currentStringHit.index;
+    // Chỉ trigger khi là dây MỚI, không phải dây đang đứng
+    if (AppState.rightHand.activeStringIndex !== currentStringHit.index) {
+        AppState.rightHand.activeStringIndex = currentStringHit.index;
 
-            // Bộ lọc chặn lặp giữ ở mức 160ms để bạn vuốt ngang mượt và nhạy hơn
-            if (now - AppState.rightHand.lastTriggerTimes[currentStringHit.index] > 160) {
-                if (AppState.leftHand.selectedChord) {
-                    playSingleString(AppState.leftHand.selectedChord, currentStringHit.index);
-                    console.log(`🎸 Gảy Ô Ngang [${currentStringHit.label}]`);
-                }
-                AppState.rightHand.lastTriggerTimes[currentStringHit.index] = now;
+        if (now - AppState.rightHand.lastTriggerTimes[currentStringHit.index] > 160) {
+            if (AppState.leftHand.selectedChord) {
+                playSingleString(AppState.leftHand.selectedChord, currentStringHit.index);
             }
+            AppState.rightHand.lastTriggerTimes[currentStringHit.index] = now;
         }
-    } else {
-        AppState.rightHand.activeStringIndex = null;
     }
+} else {
+    AppState.rightHand.activeStringIndex = null;
+}
 }
 
 function onResults(results) {
