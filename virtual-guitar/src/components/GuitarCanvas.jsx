@@ -3,7 +3,6 @@ import { useHandTracking } from '../hooks/useHandTracking';
 import { useAudioEngine } from '../hooks/useAudioEngine';
 import { getChordsConfig, getStringsConfig } from '../config/chordsConfig';
 
-
 export default function GuitarCanvas() {
     const videoRef  = useRef(null);
     const canvasRef = useRef(null);
@@ -11,12 +10,13 @@ export default function GuitarCanvas() {
 
     const appState = useRef({
         leftHand:  { hoveredChord: null, selectedChord: null, touchStartTime: 0 },
-        rightHand: { activeStringIndex: null, lostFrameCount: 0,
-                    lastTriggerTimes: [0,0,0,0,0,0],
-                    stringVibrations: [0,0,0,0,0,0],
-                    prevY: null,
-                    prevFingerX: null,
-                    },
+        rightHand: {
+            activeStringIndex: null,
+            lostFrameCount: 0,
+            lastTriggerTimes: [0,0,0,0,0,0],
+            stringVibrations: [0,0,0,0,0,0],
+            prevY: null,
+        },
         smoothedHands: [],
     });
 
@@ -35,12 +35,15 @@ export default function GuitarCanvas() {
 
         ctx.save();
         ctx.clearRect(0, 0, W, H);
-        // Vẽ ảnh camera bình thường (không mirror)
-        ctx.drawImage(results.image, 0, 0, W, H);
 
-        // Vẽ dây đàn
+        // Vẽ ảnh camera đã mirror (1 lần duy nhất)
+        ctx.save();
+        ctx.translate(W, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(results.image, 0, 0, W, H);
+        ctx.restore();
+
         drawStrings(ctx, strings, state, W, H);
-        // Vẽ chord cards
         drawChords(ctx, chords, state);
 
         let leftDetected = false;
@@ -59,10 +62,6 @@ export default function GuitarCanvas() {
                 const raw = results.multiHandLandmarks[i];
                 let label = results.multiHandedness[i].label === 'Left' ? 'TAY PHẢI' : 'TAY TRÁI';
 
-                const wristX = raw[0].x * W;
-                if (wristX > 640 && label === 'TAY PHẢI') label = 'TAY TRÁI';
-                if (wristX <= 640 && label === 'TAY TRÁI') label = 'TAY PHẢI';
-
                 const factor = label === 'TAY TRÁI' ? SMOOTHING_LEFT : SMOOTHING_RIGHT;
                 for (let j = 0; j < raw.length; j++) {
                     state.smoothedHands[i][j].x += factor * (raw[j].x - state.smoothedHands[i][j].x);
@@ -72,8 +71,10 @@ export default function GuitarCanvas() {
                 const lm = state.smoothedHands[i];
                 const color = label === 'TAY TRÁI' ? '#38bdf8' : '#fbbf24';
 
-                window.drawConnectors(ctx, lm, window.HAND_CONNECTIONS, { color, lineWidth: 3.5 });
-                window.drawLandmarks(ctx, lm, { color: '#ffffff', lineWidth: 1, radius: 3.5 });
+                // Flip landmark trước khi vẽ để khớp với ảnh đã mirror
+                const flippedLm = lm.map(p => ({ ...p, x: 1 - p.x }));
+                window.drawConnectors(ctx, flippedLm, window.HAND_CONNECTIONS, { color, lineWidth: 3.5 });
+                window.drawLandmarks(ctx, flippedLm, { color: '#ffffff', lineWidth: 1, radius: 3.5 });
 
                 if (label === 'TAY TRÁI') {
                     leftDetected = true;
@@ -83,9 +84,9 @@ export default function GuitarCanvas() {
                     handleRightHand(lm, strings, state, playSingleString);
                 }
 
+                // Vẽ label tay — dùng tọa độ đã flip
                 ctx.save();
-                ctx.translate(lm[0].x * W, lm[0].y * H);
-                ctx.scale(-1, 1);
+                ctx.translate((1 - lm[0].x) * W, lm[0].y * H);
                 ctx.font = 'bold 16px sans-serif';
                 ctx.fillStyle = color;
                 ctx.textAlign = 'center';
@@ -116,7 +117,7 @@ export default function GuitarCanvas() {
             margin:'0 auto', borderRadius:12, overflow:'hidden' }}>
             <video ref={videoRef} style={{ display:'none' }} autoPlay playsInline />
             <canvas ref={canvasRef} width={1280} height={720}
-                style={{ width:'100%', height:'100%', transform:'scaleX(-1)' }} />
+                style={{ width:'100%', height:'100%' }} />
         </div>
     );
 }
@@ -125,9 +126,12 @@ export default function GuitarCanvas() {
 
 function handleLeftHand(tip, chords, state) {
     const now = performance.now();
+    const x = (1 - tip.x) * 1280;
+    const y = tip.y * 720;
+
     const hit = chords.find(c =>
-        tip.x * 1280 >= c.xMin && tip.x * 1280 <= c.xMax &&
-        tip.y * 720  >= c.yMin && tip.y * 720  <= c.yMax
+        x >= c.xMin && x <= c.xMax &&
+        y >= c.yMin && y <= c.yMax
     );
     if (hit) {
         if (state.leftHand.hoveredChord !== hit.name) {
@@ -144,57 +148,28 @@ function handleLeftHand(tip, chords, state) {
 
 function handleRightHand(lm, strings, state, playSingleString) {
     const now = performance.now();
-
-    const x = lm[8].x * 1280;
+    const x = (1 - lm[8].x) * 1280;
     const y = lm[8].y * 720;
 
-    const prevX = state.rightHand.prevFingerX;
-
-    if (prevX === null) {
-        state.rightHand.prevFingerX = x;
-        return;
-    }
-
-    const velocity = Math.abs(x - prevX);
-
-    state.rightHand.prevFingerX = x;
-
-    // tìm dây đang chạm
     const hit = strings.find(s =>
-        x >= s.xMin &&
-        x <= s.xMax &&
-        y >= s.yMin &&
-        y <= s.yMax
+        x >= s.xMin && x <= s.xMax &&
+        y >= s.yMin && y <= s.yMax
     );
 
-    if (!hit) {
+    if (hit) {
+        if (state.rightHand.activeStringIndex !== hit.index) {
+            state.rightHand.activeStringIndex = hit.index;
+            if (now - state.rightHand.lastTriggerTimes[hit.index] > 160) {
+                if (state.leftHand.selectedChord) {
+                    playSingleString(state.leftHand.selectedChord, hit.index);
+                    state.rightHand.stringVibrations[hit.index] = now;
+                }
+                state.rightHand.lastTriggerTimes[hit.index] = now;
+            }
+        }
+    } else {
         state.rightHand.activeStringIndex = null;
-        return;
     }
-
-    // phải quét đủ nhanh mới tính là gảy
-    if (velocity < 5) return;
-
-    // chống spam
-    if (
-        now - state.rightHand.lastTriggerTimes[hit.index]
-        < 300
-    ) {
-        return;
-    }
-
-    state.rightHand.activeStringIndex = hit.index;
-
-    if (state.leftHand.selectedChord) {
-        playSingleString(
-            state.leftHand.selectedChord,
-            hit.index
-        );
-
-        state.rightHand.stringVibrations[hit.index] = now;
-    }
-
-    state.rightHand.lastTriggerTimes[hit.index] = now;
 }
 
 function drawStrings(ctx, strings, state, W, H) {
@@ -205,7 +180,6 @@ function drawStrings(ctx, strings, state, W, H) {
     const fretCount  = 7;
     const now = performance.now();
 
-    // Nền gỗ
     ctx.save();
     const grad = ctx.createLinearGradient(fretboardX, 0, fretboardX + fretboardW, 0);
     grad.addColorStop(0,   '#1A0A0A');
@@ -219,7 +193,6 @@ function drawStrings(ctx, strings, state, W, H) {
     ctx.fill();
     ctx.restore();
 
-    // Fret lines
     ctx.save();
     ctx.strokeStyle = 'rgba(200,200,200,0.30)';
     ctx.lineWidth = 1.5;
@@ -232,7 +205,6 @@ function drawStrings(ctx, strings, state, W, H) {
     }
     ctx.restore();
 
-    // Dot markers
     ctx.save();
     ctx.fillStyle = 'rgba(245,230,200,0.80)';
     [3, 5, 7].forEach(fret => {
@@ -243,7 +215,6 @@ function drawStrings(ctx, strings, state, W, H) {
     });
     ctx.restore();
 
-    // Dây đàn
     strings.forEach(string => {
         const cx = (string.xMin + string.xMax) / 2;
         const isActive = state.rightHand.activeStringIndex === string.index;
@@ -290,13 +261,12 @@ function drawChords(ctx, chords, state) {
         ctx.fill();
         ctx.stroke();
 
-        ctx.translate(chord.xMin + cw / 2, chord.yMin + ch / 2);
-        ctx.scale(-1, 1);
+        // Chữ không cần flip vì đã bỏ CSS mirror
         ctx.font = 'bold 30px Georgia, serif';
         ctx.fillStyle = isSelected ? '#D4A017' : '#F5E6C8';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(chord.name, 0, 0);
+        ctx.fillText(chord.name, chord.xMin + cw / 2, chord.yMin + ch / 2);
         ctx.restore();
     });
 }
