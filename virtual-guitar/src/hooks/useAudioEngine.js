@@ -8,6 +8,12 @@ export function useAudioEngine() {
         if (!audioCtxRef.current) {
             audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
         }
+
+        if (audioCtxRef.current.state === 'suspended') {
+            audioCtxRef.current.resume();
+        }
+
+        return audioCtxRef.current;
     }
 
     function createOscillator(freq, type, volumeRatio, startTime, duration, destinationGain) {
@@ -23,15 +29,13 @@ export function useAudioEngine() {
         osc.stop(startTime + duration);
     }
 
-    function playSingleString(chordName, stringIndex) {
-        initAudio();
-        const ctx = audioCtxRef.current;
-        if (ctx.state === 'suspended') ctx.resume();
+    function playSingleString(chordName, stringIndex, startTime = null, volumeScale = 1) {
+        const ctx = initAudio();
 
         const freq = chordStringsFrequencies[chordName]?.[stringIndex];
         if (!freq) return;
 
-        const now = ctx.currentTime;
+        const now = startTime ?? ctx.currentTime;
         let sustainTime = 5.0;
         let decayConstant = 0.25;
 
@@ -40,7 +44,7 @@ export function useAudioEngine() {
         else if (stringIndex === 3) { sustainTime = 8.5;  decayConstant = 0.40; }
 
         const isDay6 = stringIndex === 5;
-        const baseVolume = isDay6 ? 0.55 : 0.45;
+        const baseVolume = (isDay6 ? 0.55 : 0.45) * volumeScale;
 
         const noteGain = ctx.createGain();
         noteGain.gain.setValueAtTime(0, now);
@@ -67,5 +71,18 @@ export function useAudioEngine() {
         filterNode.connect(ctx.destination);
     }
 
-    return { initAudio, playSingleString };
+    function playChordStrum(chordName, startTime = null, volumeScale = 0.35) {
+        const ctx = initAudio();
+        const start = startTime ?? ctx.currentTime;
+
+        [5, 4, 3, 2, 1, 0].forEach((stringIndex, order) => {
+            playSingleString(chordName, stringIndex, start + order * 0.025, volumeScale);
+        });
+    }
+
+    function getCurrentTime() {
+        return audioCtxRef.current?.currentTime ?? 0;
+    }
+
+    return { initAudio, playSingleString, playChordStrum, getCurrentTime };
 }

@@ -2,6 +2,11 @@ import { useRef, useEffect } from 'react';
 
 export function useHandTracking({ videoRef, onResults }) {
     const cameraRef = useRef(null);
+    const onResultsRef = useRef(onResults);
+
+    useEffect(() => {
+        onResultsRef.current = onResults;
+    }, [onResults]);
 
     useEffect(() => {
         if (!videoRef.current) return;
@@ -17,7 +22,9 @@ export function useHandTracking({ videoRef, onResults }) {
             minTrackingConfidence: 0.40,
         });
 
-        hands.onResults(onResults);
+        hands.onResults((results) => {
+            onResultsRef.current(results);
+        });
 
         cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
